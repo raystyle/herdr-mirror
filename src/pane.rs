@@ -247,7 +247,7 @@ fn ssh_stream_args(ssh_target: &str, cmd: &str) -> Vec<String> {
     argv
 }
 
-fn spawn_session(args: &Args, mode: Mode, cols: usize, rows: usize, gen: u64, tx: mpsc::Sender<Msg>) -> Result<Session> {
+fn spawn_session(args: &Args, mode: Mode, takeover: bool, cols: usize, rows: usize, gen: u64, tx: mpsc::Sender<Msg>) -> Result<Session> {
     // Configured paths stay unquoted so remote-shell ~ expands; auto mode is an
     // `sh -c` resolver that takes the trailing words as "$@" (see
     // config::remote_herdr_expr).
@@ -255,11 +255,17 @@ fn spawn_session(args: &Args, mode: Mode, cols: usize, rows: usize, gen: u64, tx
         args.remote_bin.as_deref(),
         args.session.as_deref(),
     );
+    // `--takeover` only ever applies to control, and only after an attach was
+    // refused with a holder present: a first connect stays polite (a real
+    // attached human is never evicted), a reconnect against our own half-open
+    // orphan takes the attach back.
+    let takeover = if mode == Mode::Control && takeover { " --takeover" } else { "" };
     let cmd = format!(
-        "exec {} terminal session {} {} --cols {} --rows {}",
+        "exec {} terminal session {} {}{} --cols {} --rows {}",
         bin,
         mode.as_str(),
         sh_quote(&args.pane_target),
+        takeover,
         cols,
         rows
     );
@@ -753,6 +759,15 @@ fn target_gone(reason: &str, pane_target: &str) -> bool {
 /// A gone target does NOT consume a rung: if the pane comes back and later
 /// fails transiently, that failure should start where the fast ladder left
 /// off rather than at the top.
+/// Did this failure happen because another client holds the attach? herdr's
+/// sentence: "terminal attach failed: terminal <id> already has an attached
+/// client; retry with --takeover". Substring-matched for the same reasons as
+/// `target_gone` prefers whole sentences: the fragment is specific enough
+/// (it names the condition, not a word that appears elsewhere).
+fn attach_conflict(reason: &str) -> bool {
+    reason.to_ascii_lowercase().contains("already has an attached client")
+}
+
 fn reconnect_delay(gone: bool, idx: usize) -> (u64, usize) {
     if gone {
         return (GONE_BACKOFF_MS, idx);
@@ -779,6 +794,12 @@ struct App {
     /// consecutive quick control failures → fall back to observe
     control_failures: u32,
     control_sticky: bool,
+    /// set once an attach is refused because a holder exists — the holder is
+    /// a half-open orphan (network died while our ssh was SIGKILLed, so the
+    /// release line and the socket close were both lost; the remote control
+    /// process outlives its connection indefinitely). Every later control
+    /// connect passes `--takeover` so herdr evicts it on attach.
+    takeover: bool,
     pending_input: Vec<Vec<u8>>,
     last_input: Instant,
     hint_clear_at: Option<Instant>,
@@ -1011,7 +1032,7 @@ impl App {
             kill_session_process_group(s.process_group);
         }
         self.next_gen += 1;
-        match spawn_session(&self.args, m, cols, rows, self.next_gen, self.tx.clone()) {
+        match spawn_session(&self.args, m, self.takeover, cols, rows, self.next_gen, self.tx.clone()) {
             Ok(mut s) => {
                 if m == Mode::Control {
                     self.last_input = Instant::now();
@@ -1093,6 +1114,13 @@ impl App {
             return; // stale frame from a replaced session
         }
         if frame.kind == "terminal.closed" {
+            if self.mode == Mode::Control
+                && frame.reason.as_deref().is_some_and(attach_conflict)
+            {
+                // the holder is almost certainly our own half-open orphan;
+                // arm takeover so the reconnect takes the attach back
+                self.takeover = true;
+            }
             let suffix = frame.reason.as_deref().map(|r| format!(": {r}")).unwrap_or_default();
             self.renderer.status(&format!("remote terminal closed{suffix}"));
             self.paint();
@@ -1146,6 +1174,11 @@ impl App {
         self.session = None;
         let reason_line =
             reason.lines().map(str::trim).rfind(|l| !l.is_empty()).unwrap_or("").to_string();
+        if exited_mode == Mode::Control && attach_conflict(&reason_line) {
+            // same signal the closed frame carries, on the path where the
+            // session task reports the exit instead (frames can race the kill)
+            self.takeover = true;
+        }
         // control that dies quickly twice is failing (refused/dropped): fall
         // back to observe so the pane stays viewable; a keystroke retries
         if exited_mode == Mode::Control {
@@ -1624,6 +1657,7 @@ pub async fn run(args: Args) -> Result<()> {
         reconnect_at: None,
         control_failures: 0,
         control_sticky: false,
+        takeover: false,
         pending_input: Vec::new(),
         last_input: Instant::now(),
         hint_clear_at: None,
@@ -2312,6 +2346,23 @@ mod tests {
     }
 
     #[test]
+    fn attach_conflict_matches_only_a_refused_attach() {
+        // the real sentence, captured from herdr against a half-open orphan
+        assert!(attach_conflict(
+            "terminal attach failed: terminal term_65b6d7ed20dce1 already has an attached client; retry with --takeover"
+        ));
+        // case-insensitive: the reason line is lowercased nowhere else
+        assert!(attach_conflict(
+            "terminal attach failed: terminal T already has an ATTACHED client; retry with --takeover"
+        ));
+
+        // every other close reason stays polite: no takeover, plain retry
+        assert!(!attach_conflict("terminal target w1:p1 not found"));
+        assert!(!attach_conflict("ssh timeout"));
+        assert!(!attach_conflict(""));
+    }
+
+    #[test]
     fn a_gone_target_slows_down_without_consuming_the_ladder() {
         // the fix: 10s forever becomes one attempt a minute
         assert_eq!(reconnect_delay(true, 0), (GONE_BACKOFF_MS, 0));
@@ -2352,6 +2403,7 @@ mod tests {
             reconnect_at: None,
             control_failures: 0,
             control_sticky: false,
+            takeover: false,
             pending_input: Vec::new(),
             last_input: Instant::now(),
             hint_clear_at: None,
