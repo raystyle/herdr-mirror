@@ -1073,10 +1073,13 @@ async fn converge_inner(deps: &ConvergeDeps, state: &mut HostState) -> Result<()
                 struct CreatedTab {
                     tab_id: String,
                 }
-                // same non-git marker cwd the mirror panes use, so the
-                // workspace's default pane never flashes a (misleading) sidebar
-                // git branch before layout.apply swaps in the real mirror panes
-                let cwd = mirror_pane_cwd(&deps.state_dir).display().to_string();
+                // workspace-level cwd is the user's home (fork 2026-09-15):
+                // new tabs the user opens in a mirror workspace land at home,
+                // not the state-dir marker; mirror panes themselves still
+                // carry the marker cwd (loop guard + non-git sidebar) via
+                // layout.apply / pane.split below
+                let cwd = std::env::var_os("HOME").map(Into::into).unwrap_or_else(|| mirror_pane_cwd(&deps.state_dir));
+                let cwd = cwd.display().to_string();
                 let created: Created = deps
                     .local
                     .request_t("workspace.create", json!({ "label": label, "cwd": cwd, "focus": false }))
