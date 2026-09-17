@@ -12,5 +12,5 @@
 
 ## Must not
 
-- 不在本仓自建 issue 子命令面:本仓 REQ-057 裁形 = fork 轻量形(omc 代发);herdr CLI 原生 issue 子命令(tool=herdr)属 herdr 仓对齐面,不属本仓
+- 不在本仓自建 issue 子命令面:用户裁定 2026-09-17「herdr-mirror 就不做 issue 命令」,REQ-057 终形 = fork 轻量形(omc 代发),原生集成为否决项不再复议;herdr CLI 原生 issue 子命令(tool=herdr)属 herdr 仓对齐面
 - 隐私不外发:hosts.toml 地址、SSH 凭据、内网主机名不入 issue 标题与正文
