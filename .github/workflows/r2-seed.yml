@@ -1,0 +1,69 @@
+name: r2-seed
+
+# build-release 标准三段式之第三段:Release published 事件触发,从 Release 拉
+# 资产 rclone 推镜像段。编译与打包不在 CI(第一段本地、第二段 gh release 直发;
+# 标准见 project-evo plugins/evo-adr/skills/build-release/)。dispatch 补推口带
+# tag 入参,从 Release 重灌,不依赖重跑任何链。
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: '补推的 v* tag(从 Release 拉资产重灌)'
+        default: ''
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  seed:
+    # 本仓无 dev/prerelease 通道;dispatch 补推不受 prerelease 豁免影响
+    if: ${{ !github.event.release.prerelease || inputs.tag != '' }}
+    runs-on: ubuntu-latest
+    env:
+      # env-remote 配置形:命名 remote r2:,四键走 Secrets;
+      # NO_CHECK_BUCKET 必带(受限 token 无建桶权,预检 CreateBucket 会 403)
+      RCLONE_CONFIG_R2_TYPE: s3
+      RCLONE_CONFIG_R2_PROVIDER: Cloudflare
+      RCLONE_CONFIG_R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
+      RCLONE_CONFIG_R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
+      RCLONE_CONFIG_R2_ENDPOINT: ${{ secrets.R2_ENDPOINT }}
+      RCLONE_CONFIG_R2_NO_CHECK_BUCKET: "true"
+      R2_BUCKET: ${{ secrets.R2_BUCKET }}
+    steps:
+      - name: 取资产
+        env: { GH_TOKEN: "${{ github.token }}" }
+        run: |
+          set -euo pipefail
+          TAG="${{ github.event.release.tag_name || inputs.tag }}"
+          [ -n "$TAG" ] || { echo "::error::无 tag(release 事件或 dispatch 入参缺)"; exit 1; }
+          [ -n "$R2_BUCKET" ] || { echo "::error::R2_BUCKET secret 未配置"; exit 1; }
+          echo "TAG=$TAG" >> "$GITHUB_ENV"
+          echo "VER=${TAG#v}" >> "$GITHUB_ENV"
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" -D dist --clobber
+      - run: command -v rclone || (curl -fsSL https://rclone.org/install.sh | sudo bash)
+      - name: 灌段(版本段 immutable 加 stable 滚动)
+        run: |
+          set -euo pipefail
+          # 过渡白名单:批 3 包形(tar.gz)落地前现发裸二进制 herdr-mirror-*,
+          # 显式收裸件防包形白名单静默漏灌;包形落地后收掉裸件与本行注
+          INC=(--include "herdr-mirror-*" --include "SHA256SUMS" --include "*.sha256"
+               --include "*.tar.gz" --include "*.zip" --include "*.tgz" --include "*.whl")
+          rclone copy dist/ "r2:${R2_BUCKET}/herdr/${VER}/" "${INC[@]}" \
+            --header-upload "Cache-Control: public, max-age=31536000, immutable" \
+            --checksum -v --stats-one-line
+          rclone sync dist/ "r2:${R2_BUCKET}/herdr/stable/" "${INC[@]}" \
+            --header-upload "Cache-Control: public, max-age=60" --delete-excluded
+      - name: 零上传红灯(版本段与 stable 段分别清点报数,任一零即红)
+        run: |
+          set -euo pipefail
+          nv=$(rclone lsf "r2:${R2_BUCKET}/herdr/${VER}/" | wc -l)
+          ns=$(rclone lsf "r2:${R2_BUCKET}/herdr/stable/" | wc -l)
+          [ "$nv" -gt 0 ] || { echo "::error::镜像版本段零对象"; exit 1; }
+          [ "$ns" -gt 0 ] || { echo "::error::stable 段零对象(漏滚)"; exit 1; }
+          echo "mirror objects: ver=$nv stable=$ns"
+      - name: 对账回显
+        run: rclone lsl "r2:${R2_BUCKET}/herdr/${VER}/"

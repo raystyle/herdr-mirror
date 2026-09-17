@@ -51,30 +51,11 @@ jobs:
         run: |
           shasum -a 256 herdr-mirror-* > SHA256SUMS
           for f in herdr-mirror-*; do shasum -a 256 "$f" > "$f.sha256"; done
+      # 镜像播种已拆至 r2-seed.yml(Release published 触发 + dispatch 补推口,
+      # 零上传红灯两段报数;编译发布链失败不再连坐灌段)
       - uses: softprops/action-gh-release@v3
         with:
           generate_release_notes: true
           files: |
             herdr-mirror-*
-            SHA256SUMS
-      - name: mirror fleet 段自推 (omc 接管分发 2026-09-17;env 桶 herdr/<version>/)
-        if: always()
-        env:
-          RCLONE_CONFIG_R2_TYPE: s3
-          RCLONE_CONFIG_R2_PROVIDER: Cloudflare
-          RCLONE_CONFIG_R2_ENDPOINT: ${{ secrets.R2_ENDPOINT }}
-          RCLONE_CONFIG_R2_ACCESS_KEY_ID: ${{ secrets.R2_ACCESS_KEY_ID }}
-          RCLONE_CONFIG_R2_SECRET_ACCESS_KEY: ${{ secrets.R2_SECRET_ACCESS_KEY }}
-          RCLONE_CONFIG_R2_NO_CHECK_BUCKET: "true"
-        run: |
-          VER="${GITHUB_REF_NAME#v}"
-          curl -fsSL https://github.com/raystyle/herdr-mirror/raw/main/.tools/rclone-pin.sh | bash -s -- 2>/dev/null || {
-            curl -fsSLo rclone.tgz https://downloads.rclone.org/rclone-current-linux-amd64.zip && unzip -o -q rclone.tgz && sudo mv rclone-*/rclone /usr/local/bin/rclone
-          } || true
-          rclone --version
-          for f in herdr-mirror-* SHA256SUMS; do
-            [ -f "$f.sha256" ] && rclone copyto "$f.sha256" "r2:env/herdr/${VER}/${f}.sha256" --header-upload "Cache-Control: public, max-age=31536000, immutable"
-            rclone copyto "$f" "r2:env/herdr/${VER}/${f}" --header-upload "Cache-Control: public, max-age=31536000, immutable"
-          done
-          rclone lsl "r2:env/herdr/${VER}/" | wc -l
             SHA256SUMS
