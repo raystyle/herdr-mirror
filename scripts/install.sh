@@ -40,9 +40,9 @@ BASE="https://github.com/${SLUG}/releases/download/v${VERSION}"
 # (perl Digest::SHA) on older macOS and Debian-family. Neither is universal:
 # Arch's perl ships no /usr/bin/shasum, so requiring it made install fail there.
 if command -v sha256sum >/dev/null 2>&1; then
-  sha256_check() { sha256sum -c -; }
+  sha256_check() { sha256sum -c "$1"; }
 elif command -v shasum >/dev/null 2>&1; then
-  sha256_check() { shasum -a 256 -c -; }
+  sha256_check() { shasum -a 256 -c "$1"; }
 else
   fail "no SHA-256 tool found: install coreutils (sha256sum) or perl (shasum)"
 fi
@@ -52,7 +52,7 @@ trap 'rm -rf "$TMP"' EXIT
 echo "fetching ${BASE}/${ASSET}"
 curl -fsSL --retry 2 -o "${TMP}/${ASSET}" "${BASE}/${ASSET}" || fail "download failed: ${BASE}/${ASSET}"
 curl -fsSL --retry 2 -o "${TMP}/${ASSET}.sha256" "${BASE}/${ASSET}.sha256" ||
-  fail "download failed: ${BASE}/${ASSET}.sha256"
+  fail "no sidecar for ${ASSET} — the v${VERSION} release looks incomplete"
 
 # The per-artifact sidecar is the anchor contract (sha256sum-native
 # `<hash>  <file>` lines); both sha256sum -c and shasum -c accept it.
@@ -61,7 +61,10 @@ curl -fsSL --retry 2 -o "${TMP}/${ASSET}.sha256" "${BASE}/${ASSET}.sha256" ||
 
 mkdir -p "$(dirname "$DEST")"
 tar xzf "${TMP}/${ASSET}" -C "$TMP"
-install -m 755 "${TMP}/herdr-mirror-${VERSION}-${OS}-${ARCH}/herdr-mirror" "$DEST"
+srcdir="${TMP}/herdr-mirror-${VERSION}-${OS}-${ARCH}"
+[ -x "${srcdir}/herdr-mirror" ] ||
+  fail "package layout mismatch: ${srcdir}/herdr-mirror missing or not executable"
+install -m 755 "${srcdir}/herdr-mirror" "$DEST"
 echo "installed ${ASSET} v${VERSION} at ${DEST}"
 
 # Link the CLI at the stable path the README documents. Keybindings must use

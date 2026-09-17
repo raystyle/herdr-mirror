@@ -19,12 +19,21 @@ MAC_DIR="${MAC_DIR:-build/herdr-mirror}" # remote home-relative
 say() { printf '\n== %s ==\n' "$*"; }
 die() { echo "release: $*" >&2; exit 1; }
 
-# 1 版本一致性闸:tag 对双载体 manifest,不一致即止
+# 1 版本一致性闸:tag 对双载体 manifest,不一致即止;发布完整性三预检(实弹时)
 say "版本一致性闸 (tag=$TAG)"
 cv="$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)"
 pv="$(sed -n 's/^version = "\(.*\)"/\1/p' herdr-plugin.toml | head -1)"
 [ "$cv" = "$VER" ] || die "Cargo.toml=$cv != $VER"
 [ "$pv" = "$VER" ] || die "herdr-plugin.toml=$pv != $VER"
+if [ "$DRY_RUN" != "--dry-run" ]; then
+  head_tag="$(git describe --tags --exact-match HEAD 2>/dev/null || true)"
+  [ "$head_tag" = "$TAG" ] ||
+    die "HEAD 非 $TAG 精确命中(describe: ${head_tag:-无});先提交版本改动并打 tag"
+  git ls-remote --exit-code --tags origin "refs/tags/$TAG" >/dev/null 2>&1 ||
+    die "远端未见 $TAG;先 git push origin $TAG(未推 tag 时 gh 会从默认分支自建,Release 指向别处)"
+  gh release view "$TAG" >/dev/null 2>&1 &&
+    die "$TAG 已有 Release;重发走 gh release upload --clobber 或 r2-seed dispatch 补推"
+fi
 
 # 2 测试闸先行
 say "测试闸 cargo test --locked"
@@ -39,7 +48,7 @@ CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc \
 # 4 mac 实机编译 darwin 双端(aarch64 实机跑 --version;x86_64 在无 Rosetta 宿主
 #   回退 file 结构冒烟——交叉件冒烟的标准仓裁形)
 say "mac 实机编译 ($MAC_SSH)"
-rsync -a --delete --exclude target --exclude dist --exclude .git --exclude .macbin ./ "$MAC_SSH:$MAC_DIR/"
+rsync -a --delete --mkpath --exclude target --exclude dist --exclude .git --exclude .macbin ./ "$MAC_SSH:$MAC_DIR/"
 ssh "$MAC_SSH" "cd '$MAC_DIR' && \
   cargo build --release --locked --target x86_64-apple-darwin && \
   cargo build --release --locked --target aarch64-apple-darwin && \
