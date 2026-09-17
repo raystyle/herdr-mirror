@@ -63,9 +63,13 @@ jobs:
             SHA256SUMS
       - name: 派发 r2-seed 播种
         # 无 checkout,gh 需显式 --repo 才能解析仓(评审实测);派发成功不等于播种
-        # 成功,seed run 结论需另看 r2-seed 的 run,下面回显其 ID 与状态
+        # 成功,seed run 结论需另看 r2-seed 的 run。回显为信息面:新 run 入列有滞
+        # 后,--event 过滤派发形,|| true 防回显把已成功派发的 job 变红;回显按默认
+        # 分支解析 r2-seed.yml,依赖「修复链先推、tag 后打」前置(派发本身走 --ref
+        # 不受影响)。
         env: { GH_TOKEN: "${{ github.token }}" }
         run: |
           gh workflow run r2-seed.yml --repo "${GITHUB_REPOSITORY}" \
             --ref "${GITHUB_REF_NAME}" -f tag="${GITHUB_REF_NAME}"
-          gh run list --workflow r2-seed.yml --repo "${GITHUB_REPOSITORY}" --limit 1
+          gh run list --workflow r2-seed.yml --repo "${GITHUB_REPOSITORY}" \
+            --event workflow_dispatch --limit 1 || true
