@@ -5,7 +5,8 @@
 # 矩阵仓裁:linux x86_64-gnu 本职、linux aarch64-gnu 交叉(标准扩岗);
 #           darwin 双端在 mac 实机编(ssh lan-mac,aria2 家族同款工位)。
 # 用法:scripts/release.sh <vX.Y.Z> [--dry-run]
-#   --dry-run:走完闸、编译、打包、冒烟,不建 Release(实弹前演练)。
+#   --dry-run:走版本闸、测试、编译、打包、冒烟,不建 Release(实弹前演练;
+#             发布完整性预检只在实弹跑)。
 # 播种不在本脚本:Release published 事件自动触发 .github/workflows/r2-seed.yml。
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -26,6 +27,7 @@ pv="$(sed -n 's/^version = "\(.*\)"/\1/p' herdr-plugin.toml | head -1)"
 [ "$cv" = "$VER" ] || die "Cargo.toml=$cv != $VER"
 [ "$pv" = "$VER" ] || die "herdr-plugin.toml=$pv != $VER"
 if [ "$DRY_RUN" != "--dry-run" ]; then
+  [ -z "$(git status --porcelain)" ] || die "工作树有未提交改动;先提交(产物须与 tag 树一致)"
   head_tag="$(git describe --tags --exact-match HEAD 2>/dev/null || true)"
   [ "$head_tag" = "$TAG" ] ||
     die "HEAD 非 $TAG 精确命中(describe: ${head_tag:-无});先提交版本改动并打 tag"
