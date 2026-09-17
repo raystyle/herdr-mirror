@@ -62,6 +62,10 @@ fn run(cmd: &str, rest: &[String]) -> Result<()> {
 
 fn run_on(rt: &tokio::runtime::Runtime, cmd: &str, rest: &[String]) -> Result<()> {
     match cmd {
+        "--version" | "-V" => {
+            println!("herdr-mirror {}", env!("CARGO_PKG_VERSION"));
+            Ok(())
+        }
         "daemon" | "run" => rt.block_on(daemon::cmd_run(Env::resolve()?)),
         "start" => {
             let env = Env::resolve()?;

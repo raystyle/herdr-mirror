@@ -1,14 +1,14 @@
 name: r2-seed
 
 # build-release 标准三段式之第三段:Release published 事件触发,从 Release 拉
-# 资产 rclone 推镜像段。编译与打包不在 CI(第一段本地、第二段 gh release 直发;
-# 标准见 project-evo plugins/evo-adr/skills/build-release/)。dispatch 补推口带
-# tag 入参,从 Release 重灌,不依赖重跑任何链。
+# 资产 rclone 推镜像段。编译与打包不在 CI(第一段本地 scripts/release.sh、
+# 第二段该脚本的 gh release 直发;标准见 project-evo
+# plugins/evo-adr/skills/build-release/)。dispatch 补推口带 tag 入参,从
+# Release 重灌,不依赖重跑任何链。
 #
-# 触发腿注意(评审 F1):release 事件要求 Release 非 GITHUB_TOKEN 建档(Actions
-# 防递归不触发新 run);本仓 Release 现由 release.yml 的 softprops 以 github.token
-# 建,published 腿不点火,由 release.yml 末步 gh workflow run 显式派发补位
-# (workflow_dispatch 是 GITHUB_TOKEN 例外)。批 3 发布迁本地 gh 直发后本注与派发步同撤。
+# 触发腿(评审 F1 存档):release 事件要求 Release 非 GITHUB_TOKEN 建档
+# (Actions 防递归不触发新 run)。批 3 起发布恒本地 gh 直发(用户 token),
+# published 腿自然点火;若日后回退为 CI 建档,须补 GITHUB_TOKEN 例外形派发。
 
 on:
   release:
@@ -53,10 +53,8 @@ jobs:
       - name: 灌段(版本段 immutable 加 stable 滚动)
         run: |
           set -euo pipefail
-          # 过渡白名单:批 3 包形(tar.gz)落地前现发裸二进制 herdr-mirror-*,
-          # 显式收裸件防包形白名单静默漏灌;包形落地后收掉裸件与本行注
-          INC=(--include "herdr-mirror-*" --include "SHA256SUMS" --include "*.sha256"
-               --include "*.tar.gz" --include "*.zip" --include "*.tgz" --include "*.whl")
+          # 白名单 = 双端资产形(用户裁定:linux+mac,tar.gz 单形,无 win/zip 腿)
+          INC=(--include "*.tar.gz" --include "*.sha256" --include "SHA256SUMS")
           rclone copy dist/ "r2:${R2_BUCKET}/herdr/${VER}/" "${INC[@]}" \
             --header-upload "Cache-Control: public, max-age=31536000, immutable" \
             --checksum --immutable -v --stats-one-line

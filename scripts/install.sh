@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
-# Fetch the prebuilt herdr-mirror binary for this platform from GitHub
-# Releases, verified against SHA256SUMS. Run by the herdr plugin [[build]]
-# step with cwd = plugin root. No cargo fallback: dev installs (herdr plugin
-# link) build with `cargo build --release` themselves.
+# Fetch the prebuilt herdr-mirror package for this platform from GitHub
+# Releases (tar.gz: binary + README + LICENSE), verified against its
+# per-artifact .sha256 sidecar (the mirror anchor contract). Run by the herdr
+# plugin [[build]] step with cwd = plugin root. No cargo fallback: dev installs
+# (herdr plugin link) build with `cargo build --release` themselves.
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
@@ -32,7 +33,7 @@ case "$(uname -m)" in
   x86_64 | amd64) ARCH="x86_64" ;;
   *) fail "unsupported architecture: $(uname -m)" ;;
 esac
-ASSET="herdr-mirror-${OS}-${ARCH}"
+ASSET="herdr-mirror-${VERSION}-${OS}-${ARCH}.tar.gz"
 BASE="https://github.com/${SLUG}/releases/download/v${VERSION}"
 
 # SHA-256 verifier. coreutils `sha256sum` on Linux and recent macOS; `shasum`
@@ -50,18 +51,17 @@ TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 echo "fetching ${BASE}/${ASSET}"
 curl -fsSL --retry 2 -o "${TMP}/${ASSET}" "${BASE}/${ASSET}" || fail "download failed: ${BASE}/${ASSET}"
-curl -fsSL --retry 2 -o "${TMP}/SHA256SUMS" "${BASE}/SHA256SUMS" || fail "download failed: ${BASE}/SHA256SUMS"
+curl -fsSL --retry 2 -o "${TMP}/${ASSET}.sha256" "${BASE}/${ASSET}.sha256" ||
+  fail "download failed: ${BASE}/${ASSET}.sha256"
 
-# Look the hash up first, so a release missing this asset can't be reported as
-# a corrupt download: under `pipefail` a no-match grep fails the whole pipeline
-# and would otherwise land on the mismatch message below.
-EXPECTED="$(grep " ${ASSET}\$" "${TMP}/SHA256SUMS")" ||
-  fail "${ASSET} is not listed in SHA256SUMS — the v${VERSION} release looks incomplete"
-(cd "$TMP" && printf '%s\n' "$EXPECTED" | sha256_check) ||
+# The per-artifact sidecar is the anchor contract (sha256sum-native
+# `<hash>  <file>` lines); both sha256sum -c and shasum -c accept it.
+(cd "$TMP" && sha256_check "${ASSET}.sha256") ||
   fail "checksum MISMATCH for ${ASSET} — the download is corrupt or tampered with; do not use it"
 
 mkdir -p "$(dirname "$DEST")"
-install -m 755 "${TMP}/${ASSET}" "$DEST"
+tar xzf "${TMP}/${ASSET}" -C "$TMP"
+install -m 755 "${TMP}/herdr-mirror-${VERSION}-${OS}-${ARCH}/herdr-mirror" "$DEST"
 echo "installed ${ASSET} v${VERSION} at ${DEST}"
 
 # Link the CLI at the stable path the README documents. Keybindings must use
