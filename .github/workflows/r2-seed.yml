@@ -4,6 +4,11 @@ name: r2-seed
 # 资产 rclone 推镜像段。编译与打包不在 CI(第一段本地、第二段 gh release 直发;
 # 标准见 project-evo plugins/evo-adr/skills/build-release/)。dispatch 补推口带
 # tag 入参,从 Release 重灌,不依赖重跑任何链。
+#
+# 触发腿注意(评审 F1):release 事件要求 Release 非 GITHUB_TOKEN 建档(Actions
+# 防递归不触发新 run);本仓 Release 现由 release.yml 的 softprops 以 github.token
+# 建,published 腿不点 火,由 release.yml 末步 gh workflow run 显式派发补位
+# (workflow_dispatch 是 GITHUB_TOKEN 例外)。批 3 发布迁本地 gh 直发后本注与派发步同撤。
 
 on:
   release:
@@ -11,7 +16,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: '补推的 v* tag(从 Release 拉资产重灌)'
+        description: '补推的 v* tag(从 Release 拉资产重灌;留空即红)'
         default: ''
         type: string
 
@@ -54,14 +59,15 @@ jobs:
                --include "*.tar.gz" --include "*.zip" --include "*.tgz" --include "*.whl")
           rclone copy dist/ "r2:${R2_BUCKET}/herdr/${VER}/" "${INC[@]}" \
             --header-upload "Cache-Control: public, max-age=31536000, immutable" \
-            --checksum -v --stats-one-line
+            --checksum --immutable -v --stats-one-line
           rclone sync dist/ "r2:${R2_BUCKET}/herdr/stable/" "${INC[@]}" \
-            --header-upload "Cache-Control: public, max-age=60" --delete-excluded
+            --header-upload "Cache-Control: public, max-age=60" --delete-excluded \
+            --checksum
       - name: 零上传红灯(版本段与 stable 段分别清点报数,任一零即红)
         run: |
           set -euo pipefail
-          nv=$(rclone lsf "r2:${R2_BUCKET}/herdr/${VER}/" | wc -l)
-          ns=$(rclone lsf "r2:${R2_BUCKET}/herdr/stable/" | wc -l)
+          nv=$(rclone lsf --files-only "r2:${R2_BUCKET}/herdr/${VER}/" | wc -l)
+          ns=$(rclone lsf --files-only "r2:${R2_BUCKET}/herdr/stable/" | wc -l)
           [ "$nv" -gt 0 ] || { echo "::error::镜像版本段零对象"; exit 1; }
           [ "$ns" -gt 0 ] || { echo "::error::stable 段零对象(漏滚)"; exit 1; }
           echo "mirror objects: ver=$nv stable=$ns"
