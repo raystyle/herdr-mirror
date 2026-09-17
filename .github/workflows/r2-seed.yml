@@ -7,7 +7,7 @@ name: r2-seed
 #
 # 触发腿注意(评审 F1):release 事件要求 Release 非 GITHUB_TOKEN 建档(Actions
 # 防递归不触发新 run);本仓 Release 现由 release.yml 的 softprops 以 github.token
-# 建,published 腿不点 火,由 release.yml 末步 gh workflow run 显式派发补位
+# 建,published 腿不点火,由 release.yml 末步 gh workflow run 显式派发补位
 # (workflow_dispatch 是 GITHUB_TOKEN 例外)。批 3 发布迁本地 gh 直发后本注与派发步同撤。
 
 on:

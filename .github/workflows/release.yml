@@ -4,10 +4,6 @@ on:
   push:
     tags: ["v*"]
 
-permissions:
-  contents: write
-  actions: write # 播种派发步 gh workflow run 需要(workflow_dispatch 面权限)
-
 jobs:
   build:
     strategy:
@@ -44,6 +40,9 @@ jobs:
   release:
     needs: build
     runs-on: ubuntu-latest
+    permissions:
+      contents: write # 建 Release
+      actions: write # 派发播种 gh workflow run(workflow_dispatch 面)
     steps:
       - uses: actions/download-artifact@v8
         with:
@@ -63,5 +62,10 @@ jobs:
             herdr-mirror-*
             SHA256SUMS
       - name: 派发 r2-seed 播种
+        # 无 checkout,gh 需显式 --repo 才能解析仓(评审实测);派发成功不等于播种
+        # 成功,seed run 结论需另看 r2-seed 的 run,下面回显其 ID 与状态
         env: { GH_TOKEN: "${{ github.token }}" }
-        run: gh workflow run r2-seed.yml --ref "${GITHUB_REF_NAME}" -f tag="${GITHUB_REF_NAME}"
+        run: |
+          gh workflow run r2-seed.yml --repo "${GITHUB_REPOSITORY}" \
+            --ref "${GITHUB_REF_NAME}" -f tag="${GITHUB_REF_NAME}"
+          gh run list --workflow r2-seed.yml --repo "${GITHUB_REPOSITORY}" --limit 1
